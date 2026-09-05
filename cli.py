@@ -4,12 +4,26 @@ Command Line Interface for Qiskit Circuit Transpiler Agent.
 import argparse
 import csv
 import json
+import os
 import sys
+from pathlib import Path
 from agents.models import SystemTaskPayload
 from agents.supervisor import SystemSupervisor
 from agents.base import AuditLogger
 
 supervisor = SystemSupervisor(model_provider="mock")
+
+
+def _safe_resolve_path(file_path: str, must_exist: bool = False) -> Path:
+    """Resolve a path safely, preventing directory traversal."""
+    base = Path.cwd()
+    resolved = (base / file_path).resolve()
+    # Ensure the resolved path is within the working directory
+    if not str(resolved).startswith(str(base.resolve())):
+        raise ValueError(f"Path traversal detected: '{file_path}' is outside the working directory")
+    if must_exist and not resolved.exists():
+        raise FileNotFoundError(f"Input file not found: '{file_path}'")
+    return resolved
 
 
 def main(argv=None):
@@ -80,7 +94,10 @@ def main(argv=None):
         return 0
 
     if args.command == "batch":
-        with open(args.input, mode="r", encoding="utf-8-sig") as f:
+        in_path = _safe_resolve_path(args.input, must_exist=True)
+        out_path = _safe_resolve_path(args.output)
+
+        with open(in_path, mode="r", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             fieldnames = list(reader.fieldnames or [])
             rows = list(reader)
@@ -104,7 +121,7 @@ def main(argv=None):
             row_dict["audit_hash"] = dossier.audit_hash
             out_rows.append(row_dict)
 
-        with open(args.output, mode="w", encoding="utf-8", newline="") as f:
+        with open(out_path, mode="w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=out_fields)
             writer.writeheader()
             writer.writerows(out_rows)

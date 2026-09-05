@@ -6,7 +6,7 @@ import pytest
 from qiskit_transpiler.models import FrontierPayload, ExecutionStatus
 from qiskit_transpiler.engine import FrontierDomainEngine
 from qiskit_transpiler.agents import QubitMappingAgent, GateDepthOptimizerAgent, CommutationCancellationAgent, TranspilerCoordinator
-from qiskit_transpiler.cli import main
+from qiskit_transpiler.cli import main, _safe_resolve_path
 
 
 def test_sub_agents():
@@ -42,3 +42,34 @@ def test_coordinator():
 def test_cli():
     assert main(["audit", "--task-id", "CLI-01"]) == 0
     assert main(["chat", "What", "is", "the", "system", "status?"]) == 0
+
+
+def test_safe_path_resolution():
+    """Test that path traversal is blocked in qiskit_transpiler CLI."""
+    # Normal path should work
+    p = _safe_resolve_path("sample.csv", must_exist=True)
+    assert p.exists()
+
+    # Path traversal should be blocked
+    with pytest.raises(ValueError, match="Path traversal detected"):
+        _safe_resolve_path("../../etc/passwd")
+
+    with pytest.raises(ValueError, match="Path traversal detected"):
+        _safe_resolve_path("../../../windows/system32/config/sam")
+
+
+def test_coordinator_all_alert_levels():
+    """Test coordinator produces correct alert levels for different inputs."""
+    coord = TranspilerCoordinator()
+
+    # Nominal case - no alerts
+    p_nominal = FrontierPayload("N1", "KEY-N1", primary_metric=10.0, secondary_metric=4.0, status_descriptor="NOMINAL")
+    d = coord.process(p_nominal)
+    assert d["overall_status"] == ExecutionStatus.NOMINAL.value
+    assert d["total_alerts"] == 0
+
+    # Critical case
+    p_critical = FrontierPayload("C1", "KEY-C1", primary_metric=35.0, secondary_metric=15.0, status_descriptor="ANOMALY", is_critical_flag=True)
+    d = coord.process(p_critical)
+    assert d["overall_status"] == ExecutionStatus.CRITICAL_INTERVENTION.value
+    assert d["critical_count"] > 0

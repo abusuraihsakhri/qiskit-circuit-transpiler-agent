@@ -8,3 +8,15 @@ output.csv
 dist/
 build/
 *.egg-info/
+.venv/
+venv/
+.env
+*.egg
+.coverage
+htmlcov/
+.tox/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
