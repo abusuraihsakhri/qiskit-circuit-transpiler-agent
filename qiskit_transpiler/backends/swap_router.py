@@ -43,7 +43,7 @@ class RoutingResult:
 
 
 class SABRERouter:
-    """SABRE algorithm for SWAP routing on hardware topologies."""
+    """Deterministic shortest-path router; retains the historic SABRE class name."""
 
     def __init__(self, coupling_map: CouplingMap, decay_rate: float = 0.001):
         self.coupling_map = coupling_map
@@ -165,12 +165,7 @@ class HardwareAwareSwapRouter:
         sabre = SABRERouter(self.coupling_map)
         result = sabre.route(circuit_edges, num_qubits, initial_mapping)
 
-        # Re-compute fidelity with actual backend calibration data
-        total_error = 0.0
-        for swap in result.swap_operations:
-            total_error += self.coupling_map.edge_error(swap.qubit_a, swap.qubit_b)
-
-        result.fidelity_estimate = math.exp(-total_error) if result.swap_operations else 1.0
+        # The router already uses the selected backend's illustrative edge rates.
         return result
 
     def compare_routing_strategies(
@@ -182,12 +177,23 @@ class HardwareAwareSwapRouter:
         sabre = SABRERouter(self.coupling_map)
         result_default = sabre.route(circuit_edges, num_qubits)
 
-        # Try with different initial mappings
+        # Deterministic alternative placements (not stochastic SABRE search).
         best_result = result_default
-        for _ in range(5):
-            random_mapping = {i: i for i in range(min(num_qubits, self.coupling_map.num_qubits))}
-            result = sabre.route(circuit_edges, num_qubits, random_mapping)
-            if result.total_swap_count < best_result.total_swap_count:
+        capacity = self.coupling_map.num_qubits
+        candidates = [
+            {q: q for q in range(num_qubits)},
+            {q: capacity - 1 - q for q in range(num_qubits)},
+        ]
+        for offset in range(1, 4):
+            candidates.append({q: (q + offset) % capacity for q in range(num_qubits)})
+        for mapping in candidates:
+            try:
+                result = sabre.route(circuit_edges, num_qubits, mapping)
+            except ValueError:
+                continue  # A candidate may occupy a disconnected component.
+            if (result.total_swap_count, result.total_routing_cost) < (
+                best_result.total_swap_count, best_result.total_routing_cost
+            ):
                 best_result = result
 
         return {
