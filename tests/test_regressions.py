@@ -127,3 +127,10 @@ def test_non_finite_metrics_are_rejected():
         SystemTaskPayload(task_id="T", target_identifier="X", primary_metric=float("nan"))
     with pytest.raises(ValueError, match="finite"):
         FrontierPayload("T", "X", float("inf"), 1.0, "NOMINAL")
+
+
+def test_unimplemented_model_providers_fail_explicitly():
+    from agents.llm_factory import LLMFactory
+    with pytest.raises(ValueError, match="not implemented"):
+        LLMFactory.create("openai")
+    assert "no language model is connected" in LLMFactory.create("mock").invoke("status?").lower()
