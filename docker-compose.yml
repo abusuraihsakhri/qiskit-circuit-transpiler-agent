@@ -5,7 +5,7 @@ services:
     build: .
     container_name: qiskit-circuit-transpiler-engine
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - AUDIT_SECRET_KEY=${AUDIT_SECRET_KEY:?Set AUDIT_SECRET_KEY in the host environment}
       - MODEL_PROVIDER=mock
