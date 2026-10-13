@@ -1,7 +1,7 @@
 """
 Pydantic v2 schemas and data definitions for Qiskit Circuit Transpiler Agent.
-Domain: Clinical & Biomedical AI
-Standard: CAP / CLSI / ISO Standards
+Domain: Generic numerical threshold auditing
+Rules: Illustrative fixed thresholds; no industry certification
 """
 import datetime
 from enum import Enum
@@ -39,7 +39,7 @@ class AgentAlert(BaseModel):
     summary: str
     technical_details: str
     actionable_remediation: str
-    standard_reference: str = "CAP / CLSI / ISO Standards"
+    standard_reference: str = "Illustrative threshold rules"
     timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
 
     def to_dict(self) -> Dict[str, Any]:
@@ -49,7 +49,7 @@ class AgentAlert(BaseModel):
 class ConsensusDossier(BaseModel):
     dossier_id: str
     system_slug: str = "qiskit-circuit-transpiler-agent"
-    domain: str = "Clinical & Biomedical AI"
+    domain: str = "Generic metric evaluation"
     task_id: str
     target_identifier: str
     overall_urgency: UrgencyLevel
