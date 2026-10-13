@@ -4,6 +4,8 @@ import math
 import pytest
 
 from agents.base import AuditTrail
+from agents.models import SystemTaskPayload
+from qiskit_transpiler.models import FrontierPayload
 from cli import _parse_csv_bool as parse_primary_bool
 from qiskit_transpiler.cli import _parse_csv_bool as parse_quantum_bool
 from qiskit_transpiler.backends.topology import BackendFamily, BackendTopology, CouplingMap
@@ -117,3 +119,11 @@ def test_fidelity_estimator_and_invalid_circuit():
         estimator.estimate(-1, 0)
     with pytest.raises(ValueError):
         ParetoOptimizer().optimize(2, 3, 4, 3)
+
+
+def test_non_finite_metrics_are_rejected():
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        SystemTaskPayload(task_id="T", target_identifier="X", primary_metric=float("nan"))
+    with pytest.raises(ValueError, match="finite"):
+        FrontierPayload("T", "X", float("inf"), 1.0, "NOMINAL")
