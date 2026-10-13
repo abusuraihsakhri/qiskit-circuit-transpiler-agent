@@ -33,3 +33,9 @@ qiskit-circuit-transpiler-agent = "cli:main"
 [project.urls]
 Homepage = "https://github.com/abusuraihsakhri/qiskit-circuit-transpiler-agent"
 Repository = "https://github.com/abusuraihsakhri/qiskit-circuit-transpiler-agent.git"
+
+[tool.setuptools]
+py-modules = ["cli", "enrichment", "simulator", "qiskit_transpiler_app"]
+
+[tool.setuptools.packages.find]
+include = ["agents", "agents.*", "qiskit_transpiler", "qiskit_transpiler.*"]
