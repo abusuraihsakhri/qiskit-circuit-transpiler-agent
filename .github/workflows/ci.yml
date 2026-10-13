@@ -24,17 +24,21 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install fastapi uvicorn pydantic pytest
+        pip install -e ".[dev]"
 
     - name: Run Pytest Suite
       run: |
+        python -m compileall -q agents qiskit_transpiler cli.py enrichment.py simulator.py
         pytest -v
 
-    - name: Security SAST & Zero-PHI Audit
+    - name: Run Node browser-routing tests
+      run: node --test tests/test_web.cjs
+
+    - name: Audit signature smoke test
       run: |
         python -c "
         from agents.base import PHIGuard, AuditLogger
         import pytest
         assert AuditLogger.verify_integrity() is True
-        print('Security & Zero-PHI Audit Passed!')
+        print('Audit integrity check passed')
         "

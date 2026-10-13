@@ -4,6 +4,7 @@ Implements VF2 subgraph matching for optimal initial qubit placement.
 """
 from __future__ import annotations
 import math
+import heapq
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Set
 from enum import Enum
@@ -56,21 +57,32 @@ class CouplingMap:
         return mat
 
     def subgraph(self, qubits: List[int]) -> "CouplingMap":
-        """Extract a subgraph containing only the specified qubits."""
-        qubit_set = set(qubits)
-        sub_edges = [(q1, q2) for q1, q2 in self.edges if q1 in qubit_set and q2 in qubit_set]
-        sub_errors = {k: v for k, v in self.gate_errors.items() if k[0] in qubit_set and k[1] in qubit_set}
-        sub_t1 = {k: v for k, v in self.t1_times.items() if k in qubit_set}
-        sub_t2 = {k: v for k, v in self.t2_times.items() if k in qubit_set}
-        sub_sq = {k: v for k, v in self.single_qubit_errors.items() if k in qubit_set}
+        """Return a dense, zero-based subgraph in the specified qubit order."""
+        if len(qubits) != len(set(qubits)) or any(
+            q < 0 or q >= self.num_qubits for q in qubits
+        ):
+            raise ValueError("Subgraph qubits must be unique and in range")
+        indices = {physical: local for local, physical in enumerate(qubits)}
+        sub_edges = [
+            (indices[a], indices[b]) for a, b in self.edges
+            if a in indices and b in indices
+        ]
+        sub_errors = {
+            (indices[a], indices[b]): error
+            for (a, b), error in self.gate_errors.items()
+            if a in indices and b in indices
+        }
+        def remap(values):
+            return {indices[q]: value for q, value in values.items() if q in indices}
+
         return CouplingMap(
             name=f"{self.name}_subgraph",
             num_qubits=len(qubits),
             edges=sub_edges,
             gate_errors=sub_errors,
-            t1_times=sub_t1,
-            t2_times=sub_t2,
-            single_qubit_errors=sub_sq,
+            t1_times=remap(self.t1_times),
+            t2_times=remap(self.t2_times),
+            single_qubit_errors=remap(self.single_qubit_errors),
         )
 
 
@@ -89,21 +101,26 @@ class BackendTopology:
         return self.coupling_map.num_qubits
 
     def fidelity_weighted_distance(self, q1: int, q2: int) -> float:
-        """Compute fidelity-weighted shortest path distance between two qubits."""
-        if q1 == q2:
-            return 0.0
-        # BFS with fidelity weights
-        visited = {q1}
-        queue = [(q1, 0.0)]
-        while queue:
-            current, dist = queue.pop(0)
-            for nbr in self.coupling_map.neighbors(current):
-                if nbr == q2:
-                    return dist + self.coupling_map.edge_error(current, nbr)
-                if nbr not in visited:
-                    visited.add(nbr)
-                    queue.append((nbr, dist + self.coupling_map.edge_error(current, nbr)))
-        return float('inf')
+        """Compute minimum accumulated edge-error cost with Dijkstra's algorithm."""
+        if not (0 <= q1 < self.num_qubits and 0 <= q2 < self.num_qubits):
+            raise ValueError("Qubit index out of range")
+        heap = [(0.0, q1)]
+        best = {q1: 0.0}
+        while heap:
+            cost, current = heapq.heappop(heap)
+            if current == q2:
+                return cost
+            if cost > best[current]:
+                continue
+            for neighbor in self.coupling_map.neighbors(current):
+                weight = self.coupling_map.edge_error(current, neighbor)
+                if not math.isfinite(weight) or weight < 0:
+                    raise ValueError("Edge errors must be finite and nonnegative")
+                new_cost = cost + weight
+                if new_cost < best.get(neighbor, float("inf")):
+                    best[neighbor] = new_cost
+                    heapq.heappush(heap, (new_cost, neighbor))
+        return float("inf")
 
 
 class BackendRegistry:

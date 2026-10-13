@@ -43,7 +43,7 @@ class RoutingResult:
 
 
 class SABRERouter:
-    """SABRE algorithm for SWAP routing on hardware topologies."""
+    """Deterministic shortest-path router; retains the historic SABRE class name."""
 
     def __init__(self, coupling_map: CouplingMap, decay_rate: float = 0.001):
         self.coupling_map = coupling_map
@@ -55,142 +55,97 @@ class SABRERouter:
         num_qubits: int,
         initial_mapping: Optional[Dict[int, int]] = None,
     ) -> RoutingResult:
-        """Route a circuit onto the hardware using SABRE algorithm."""
-        if initial_mapping is None:
-            initial_mapping = self._greedy_initial_mapping(circuit_edges, num_qubits)
+        """Route ordered two-qubit interactions using deterministic shortest paths.
 
-        # Build reverse mapping
-        logical_to_physical = dict(initial_mapping)
-        physical_to_logical = {v: k for k, v in logical_to_physical.items()}
+        A compatibility implementation; this is not the full Qiskit SABRE pass.
+        Interactions retain their original execution order. Each inserted SWAP
+        may move a logical qubit into a previously unused physical location.
+        """
+        if not 0 <= num_qubits <= self.coupling_map.num_qubits:
+            raise ValueError("Circuit qubit count exceeds the hardware capacity")
+        for q1, q2 in circuit_edges:
+            if not (0 <= q1 < num_qubits and 0 <= q2 < num_qubits) or q1 == q2:
+                raise ValueError(f"Invalid two-qubit interaction: {(q1, q2)}")
 
-        swap_ops: List[SwapOperation] = []
-        remaining_edges = list(circuit_edges)
-        layer = 0
+        mapping = dict(
+            self._greedy_initial_mapping(circuit_edges, num_qubits)
+            if initial_mapping is None else initial_mapping
+        )
+        if set(mapping) != set(range(num_qubits)):
+            raise ValueError("Initial mapping must include every logical qubit")
+        if len(set(mapping.values())) != num_qubits or any(
+            not 0 <= p < self.coupling_map.num_qubits for p in mapping.values()
+        ):
+            raise ValueError("Initial mapping must be injective and within hardware bounds")
 
-        while remaining_edges:
-            # Find executable gates (both qubits adjacent on hardware)
-            executable = []
-            non_executable = []
-            for q1, q2 in remaining_edges:
-                p1, p2 = logical_to_physical[q1], logical_to_physical[q2]
-                if self.coupling_map.is_connected(p1, p2):
-                    executable.append((q1, q2))
-                else:
-                    non_executable.append((q1, q2))
+        initial = dict(mapping)
+        reverse = {p: q for q, p in mapping.items()}
+        swaps: List[SwapOperation] = []
 
-            if not non_executable:
-                break
+        for gate_index, (q1, q2) in enumerate(circuit_edges):
+            while not self.coupling_map.is_connected(mapping[q1], mapping[q2]):
+                path = self._shortest_path(mapping[q1], mapping[q2])
+                if path is None:
+                    raise ValueError(f"No physical route exists for interaction {(q1, q2)}")
+                p1, p2 = path[0], path[1]
+                # Move a logical qubit along a hardware edge, including empty sites.
+                l1, l2 = reverse.pop(p1, None), reverse.pop(p2, None)
+                if l1 is not None:
+                    mapping[l1] = p2
+                    reverse[p2] = l1
+                if l2 is not None:
+                    mapping[l2] = p1
+                    reverse[p1] = l2
+                swaps.append(SwapOperation(
+                    p1, p2, 3.0 * self.coupling_map.edge_error(p1, p2),
+                    gate_index
+                ))
 
-            # Find best SWAP to insert
-            best_swap = self._find_best_swap(logical_to_physical, non_executable)
-            if best_swap is None:
-                break
-
-            # Apply SWAP
-            lq1, lq2 = best_swap
-            p1, p2 = logical_to_physical[lq1], logical_to_physical[lq2]
-            cost = self.coupling_map.edge_error(p1, p2)
-            swap_ops.append(SwapOperation(p1, p2, cost, layer))
-
-            # Update mappings
-            logical_to_physical[lq1], logical_to_physical[lq2] = p2, p1
-            remaining_edges = non_executable
-            layer += 1
-
-        # Compute fidelity estimate
-        total_error = sum(s.cost for s in swap_ops)
-        fidelity = math.exp(-total_error) if swap_ops else 1.0
-
+        total_error = sum(s.cost for s in swaps)
         return RoutingResult(
-            initial_mapping=initial_mapping,
-            swap_operations=swap_ops,
-            total_swap_count=len(swap_ops),
-            total_cnot_depth=len(swap_ops) + len(circuit_edges),
-            total_routing_cost=sum(s.cost for s in swap_ops),
-            fidelity_estimate=fidelity,
+            initial_mapping=initial,
+            swap_operations=swaps,
+            total_swap_count=len(swaps),
+            # Serial two-qubit gate count proxy; actual parallel depth requires scheduling.
+            total_cnot_depth=len(circuit_edges) + 3 * len(swaps),
+            total_routing_cost=total_error,
+            # Swap-induced fidelity proxy; excludes original gates and readout.
+            fidelity_estimate=math.exp(-total_error),
         )
 
-    def _greedy_initial_mapping(self, circuit_edges: List[Tuple[int, int]], num_qubits: int) -> Dict[int, int]:
-        """Greedy initial qubit placement based on circuit structure."""
-        # Build circuit adjacency
-        adj: Dict[int, Set[int]] = {i: set() for i in range(num_qubits)}
+    def _greedy_initial_mapping(
+        self, circuit_edges: List[Tuple[int, int]], num_qubits: int
+    ) -> Dict[int, int]:
+        degree = {q: 0 for q in range(num_qubits)}
         for q1, q2 in circuit_edges:
-            adj[q1].add(q2)
-            adj[q2].add(q1)
+            degree[q1] += 1
+            degree[q2] += 1
+        logical = sorted(degree, key=lambda q: (-degree[q], q))
+        physical = sorted(
+            range(self.coupling_map.num_qubits),
+            key=lambda p: (-len(self.coupling_map.neighbors(p)), p),
+        )
+        return dict(zip(logical, physical))
 
-        # Sort by degree (highest first)
-        sorted_qubits = sorted(range(num_qubits), key=lambda q: -len(adj[q]))
+    def _shortest_path(self, start: int, target: int) -> Optional[List[int]]:
+        """Find a minimum-hop physical route. Return None for disconnected sites."""
+        from collections import deque
 
-        # Map to hardware qubits with highest connectivity
-        hw_degrees = [(len(self.coupling_map.neighbors(i)), i) for i in range(self.coupling_map.num_qubits)]
-        hw_degrees.sort(reverse=True)
-
-        mapping = {}
-        for i, logical_q in enumerate(sorted_qubits):
-            if i < len(hw_degrees):
-                mapping[logical_q] = hw_degrees[i][1]
-
-        return mapping
-
-    def _find_best_swap(
-        self,
-        logical_to_physical: Dict[int, int],
-        remaining_edges: List[Tuple[int, int]],
-    ) -> Optional[Tuple[int, int]]:
-        """Find the best SWAP operation to reduce total routing cost."""
-        best_cost = float('inf')
-        best_swap = None
-
-        # Collect physical qubits involved in remaining edges
-        involved_physical: Set[int] = set()
-        for q1, q2 in remaining_edges:
-            involved_physical.add(logical_to_physical[q1])
-            involved_physical.add(logical_to_physical[q2])
-
-        # Try all SWAPs on adjacent qubits
-        for p1 in involved_physical:
-            for p2 in self.coupling_map.neighbors(p1):
-                if p2 in involved_physical:
-                    continue
-                # Compute cost of this SWAP
-                cost = self._swap_cost(p1, p2, logical_to_physical, remaining_edges)
-                if cost < best_cost:
-                    best_cost = cost
-                    # Find logical qubits at these physical positions
-                    lq1 = next((lq for lq, pp in logical_to_physical.items() if pp == p1), None)
-                    lq2 = next((lq for lq, pp in logical_to_physical.items() if pp == p2), None)
-                    if lq1 is not None and lq2 is not None:
-                        best_swap = (lq1, lq2)
-
-        return best_swap
-
-    def _swap_cost(
-        self,
-        p1: int,
-        p2: int,
-        logical_to_physical: Dict[int, int],
-        remaining_edges: List[Tuple[int, int]],
-    ) -> float:
-        """Compute the cost of inserting a SWAP between physical qubits p1 and p2."""
-        # Simulate the SWAP
-        new_mapping = dict(logical_to_physical)
-        lq1 = next((lq for lq, pp in new_mapping.items() if pp == p1), None)
-        lq2 = next((lq for lq, pp in new_mapping.items() if pp == p2), None)
-        if lq1 is not None and lq2 is not None:
-            new_mapping[lq1], new_mapping[lq2] = p2, p1
-
-        # Compute new total distance
-        total_dist = 0.0
-        for q1, q2 in remaining_edges:
-            np1, np2 = new_mapping[q1], new_mapping[q2]
-            if self.coupling_map.is_connected(np1, np2):
-                total_dist += 0.0
-            else:
-                total_dist += 1.0
-
-        # Add SWAP gate error cost
-        swap_error = self.coupling_map.edge_error(p1, p2)
-        return total_dist + swap_error * 10
+        queue = deque([start])
+        parent = {start: None}
+        while queue:
+            current = queue.popleft()
+            if current == target:
+                path = [current]
+                while parent[current] is not None:
+                    current = parent[current]
+                    path.append(current)
+                return list(reversed(path))
+            for neighbor in self.coupling_map.neighbors(current):
+                if neighbor not in parent:
+                    parent[neighbor] = current
+                    queue.append(neighbor)
+        return None
 
 
 class HardwareAwareSwapRouter:
@@ -210,12 +165,7 @@ class HardwareAwareSwapRouter:
         sabre = SABRERouter(self.coupling_map)
         result = sabre.route(circuit_edges, num_qubits, initial_mapping)
 
-        # Re-compute fidelity with actual backend calibration data
-        total_error = 0.0
-        for swap in result.swap_operations:
-            total_error += self.coupling_map.edge_error(swap.qubit_a, swap.qubit_b)
-
-        result.fidelity_estimate = math.exp(-total_error) if result.swap_operations else 1.0
+        # The router already uses the selected backend's illustrative edge rates.
         return result
 
     def compare_routing_strategies(
@@ -227,12 +177,23 @@ class HardwareAwareSwapRouter:
         sabre = SABRERouter(self.coupling_map)
         result_default = sabre.route(circuit_edges, num_qubits)
 
-        # Try with different initial mappings
+        # Deterministic alternative placements (not stochastic SABRE search).
         best_result = result_default
-        for _ in range(5):
-            random_mapping = {i: i for i in range(min(num_qubits, self.coupling_map.num_qubits))}
-            result = sabre.route(circuit_edges, num_qubits, random_mapping)
-            if result.total_swap_count < best_result.total_swap_count:
+        capacity = self.coupling_map.num_qubits
+        candidates = [
+            {q: q for q in range(num_qubits)},
+            {q: capacity - 1 - q for q in range(num_qubits)},
+        ]
+        for offset in range(1, 4):
+            candidates.append({q: (q + offset) % capacity for q in range(num_qubits)})
+        for mapping in candidates:
+            try:
+                result = sabre.route(circuit_edges, num_qubits, mapping)
+            except ValueError:
+                continue  # A candidate may occupy a disconnected component.
+            if (result.total_swap_count, result.total_routing_cost) < (
+                best_result.total_swap_count, best_result.total_routing_cost
+            ):
                 best_result = result
 
         return {

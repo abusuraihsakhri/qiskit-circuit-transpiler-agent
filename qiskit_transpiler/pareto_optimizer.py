@@ -109,9 +109,11 @@ class FidelityEstimator:
         num_measurements: int = 0,
     ) -> float:
         """Estimate overall circuit fidelity: F = prod(1 - err_i)."""
+        if min(single_qubit_count, two_qubit_count, num_measurements) < 0:
+            raise ValueError("Gate and measurement counts must be nonnegative")
         f_single = (1.0 - self.single_qubit_error) ** single_qubit_count
         f_two = (1.0 - self.two_qubit_error) ** two_qubit_count
-        f_readout = (1.0 - self.readout_error) ** max(num_measurements, 1)
+        f_readout = (1.0 - self.readout_error) ** num_measurements
         return f_single * f_two * f_readout
 
     def estimate_from_result(self, result: TranspilationResult, num_measurements: int = 0) -> float:
@@ -134,6 +136,10 @@ class ParetoOptimizer:
         num_qubits: int,
     ) -> ParetoFrontier:
         """Run transpilation at multiple optimization levels and build Pareto frontier."""
+        if num_qubits < 1 or min(base_gate_count, base_depth, base_cnot_count) < 0:
+            raise ValueError("Circuit counts must be nonnegative and num_qubits positive")
+        if base_cnot_count > base_gate_count:
+            raise ValueError("CNOT count cannot exceed total gate count")
         results = []
 
         for level in OptimizationLevel:
@@ -187,11 +193,12 @@ class ParetoOptimizer:
         gate_factor, depth_factor, cnot_factor = reduction_factors[level]
         time_factors = {0: 10, 1: 50, 2: 200, 3: 800}
 
+        gate_count = max(0, int(base_gate_count * gate_factor))
         return TranspilationResult(
             optimization_level=level,
-            gate_count=max(1, int(base_gate_count * gate_factor)),
-            circuit_depth=max(1, int(base_depth * depth_factor)),
-            cnot_count=max(0, int(base_cnot_count * cnot_factor)),
+            gate_count=gate_count,
+            circuit_depth=max(0, int(base_depth * depth_factor)),
+            cnot_count=min(gate_count, max(0, int(base_cnot_count * cnot_factor))),
             estimated_fidelity=0.0,  # Will be computed by caller
             transpilation_time_ms=time_factors[level.value] + num_qubits * level.value,
         )

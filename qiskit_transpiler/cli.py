@@ -16,11 +16,20 @@ def _safe_resolve_path(file_path: str, must_exist: bool = False) -> Path:
     """Resolve a path safely, preventing directory traversal."""
     base = Path.cwd()
     resolved = (base / file_path).resolve()
-    if not str(resolved).startswith(str(base.resolve())):
+    if not resolved.is_relative_to(base.resolve()):
         raise ValueError(f"Path traversal detected: '{file_path}' is outside the working directory")
     if must_exist and not resolved.exists():
         raise FileNotFoundError(f"Input file not found: '{file_path}'")
     return resolved
+
+
+def _parse_csv_bool(value: str) -> bool:
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "y"}:
+        return True
+    if normalized in {"false", "0", "no", "n", ""}:
+        return False
+    raise ValueError(f"Invalid CSV boolean: {value!r}")
 
 
 def main(argv=None):
@@ -83,6 +92,8 @@ def main(argv=None):
     if args.command == "batch":
         in_path = _safe_resolve_path(args.input, must_exist=True)
         out_path = _safe_resolve_path(args.output)
+        if in_path == out_path:
+            raise ValueError("Input and output CSV paths must differ")
 
         with open(in_path, mode="r", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
@@ -98,7 +109,7 @@ def main(argv=None):
                 primary_metric=float(r.get("primary_metric", 15.0)),
                 secondary_metric=float(r.get("secondary_metric", 5.0)),
                 status_descriptor=r.get("status_descriptor", "NOMINAL"),
-                is_critical_flag=bool(r.get("is_critical_flag", False)),
+                is_critical_flag=_parse_csv_bool(r.get("is_critical_flag", "")),
             )
             dossier = coordinator.process(payload)
             row_dict = dict(r)

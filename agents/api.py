@@ -12,7 +12,7 @@ supervisor = SystemSupervisor(model_provider="mock")
 
 app = FastAPI(
     title="Qiskit Circuit Transpiler Agent API",
-    description="Enterprise Distributed Component Platform (Clinical & Biomedical AI)",
+    description="Illustrative scalar threshold assessment; not Qiskit compilation",
     version="3.0.0-ENTERPRISE",
 )
 
@@ -23,7 +23,7 @@ class ChatRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "HEALTHY", "service": "qiskit-circuit-transpiler-agent", "domain": "Clinical & Biomedical AI", "standard": "CAP / CLSI / ISO Standards", "version": "3.0.0-ENTERPRISE"}
+    return {"status": "HEALTHY", "service": "qiskit-circuit-transpiler-agent", "domain": "Generic scalar threshold evaluation", "standard": "Demonstration thresholds (not a certified standard)", "version": "3.0.0-ENTERPRISE"}
 
 
 @app.get("/metrics")
@@ -31,7 +31,7 @@ def metrics():
     return {
         "dossiers_processed_total": len(supervisor.dossier_registry),
         "audit_blocks_total": len(AuditLogger.get_trail()),
-        "system_status": "NOMINAL_OPTIMAL"
+        "system_status": "ACTIVE"
     }
 
 
