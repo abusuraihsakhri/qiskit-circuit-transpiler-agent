@@ -1,141 +1,78 @@
 # Qiskit Circuit Transpiler Agent
 
-> **Domain:** Quantum Computing
-> **Standard:** OpenQASM 3.0 / Qiskit Transpiler Standard
+A Python project with two complementary tools: a numerical threshold-audit service and experimental quantum-circuit routing and optimization utilities. A standalone browser demo illustrates sequential two-qubit SWAP routing over simple coupling graphs.
 
-<div align="center">
+**Important:** Despite the repository name, the current implementation does **not** call Qiskit's `transpile()` or execute OpenQASM circuits. The routing and Pareto calculations are illustrative heuristics, not hardware-validated quantum compilation. The browser demo performs its own local calculations and does not call the Python server.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg?logo=fastapi&logoColor=white)
-![Audit Trail](https://img.shields.io/badge/Audit-HMAC--SHA256_Tamper--Evident-brightgreen.svg)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)
+## Features
 
-</div>
+- Deterministic, shortest-path routing of ordered two-qubit interactions with validated initial qubit placement; SWAP count and serial two-qubit-gate count proxy.
+- Illustrative backend registry (Eagle, Heron, Forte, Ankaa-2); topology and error values are synthetic examples **not** device calibration.
+- Pareto analysis using simulated reductions in depth/gate count and a simple multiplicative fidelity estimator.
+- Error-budget accounting and conservative cancellation of explicitly named self-inverse/inverse gate pairs.
+- Separate multi-worker numerical threshold auditing with FastAPI endpoints, CLI and CSV batch mode.
+- In-memory HMAC-SHA256 hash-chained audit log, requiring `AUDIT_SECRET_KEY` for durable verification across restarts.
+- Local-only browser routing demonstration in `web/index.html`, with JSON export.
 
----
+## Browser demonstration
 
-## 📖 What It Does
+Open `web/index.html` in a modern browser. Choose 2–16 qubits and a line, ring or all-to-all topology, then enter two-qubit interactions as lines of `0,3`. **Route circuit** computes the inserted SWAP operations; **Export JSON** saves the result.
 
-Qiskit Circuit Transpiler Agent is a multi-agent quantum circuit analysis and transpilation optimization framework. It evaluates quantum circuit parameters against operational thresholds, optimizes CNOT gate depth, and provides Pareto-optimal tradeoffs between circuit depth and estimated fidelity.
+The demo uses an identity initial mapping and a uniform user-supplied error assumption. Its fidelity proxy covers inserted SWAPs only, excluding original gate errors, readout and parallel scheduling. All inputs remain local; no external API, user account or network access is required. The static `web/` directory is suitable for GitHub Pages once Pages is enabled for the repository and the deployment workflow succeeds.
 
----
+## Python installation
 
-## ⚙️ Key Capabilities & Algorithmic Modules
-
-- **Multi-Agent Circuit Analysis**: Three specialized sub-agents audit qubit mapping, gate depth, and protocol conformance
-- **Error Budget Manager**: Tracks per-qubit and per-gate error allocation during transpilation
-- **Pareto Optimization**: Multi-objective optimization across transpilation optimization levels
-- **Noise-Aware Gate Cancellation**: Cancels inverse gate pairs while respecting error budgets
-- **HMAC-SHA256 Audit Trail**: Cryptographically signed, tamper-evident logging
-- **FastAPI REST Server**: OpenAPI endpoints for circuit evaluation and chat
-
----
-
-## 💻 Installation
+Requires Python 3.10–3.12 (the tested CI matrix). From the repository root:
 
 ```bash
-pip install -e .
+python -m pip install -e ".[dev]"
+python -m pytest -v
+node --test tests/test_web.cjs  # optional: Node.js for browser logic tests
 ```
 
-For development (includes test dependencies):
+For production without test tools: `python -m pip install .`.
+
+## Command-line examples
+
+The original generic threshold-audit CLI remains available:
+
 ```bash
-pip install -e ".[dev]"
-```
-
----
-
-## 💻 CLI Quickstart & Usage
-
-### 1. Single Task Evaluation
-```bash
-python cli.py audit --task-id TASK-001 --target TARGET-01 --primary 28.5 --secondary 14.2 --critical --status DISCORDANT
-```
-
-### 2. System Chat
-```bash
+python cli.py audit --task-id TASK-001 --target TARGET-01 --primary 28.4 --secondary 14.2 --critical --status DISCORDANT
 python cli.py chat "What standard is applied?"
-```
-
-### 3. Batch Processing
-```bash
 python cli.py batch -i sample.csv -o results.csv
-```
-
-### 4. Verify Audit Trail
-```bash
 python cli.py verify-audit
-```
-
-### 5. Launch REST Server
-```bash
 python cli.py serve --host 127.0.0.1 --port 8000
 ```
 
-### Parameter Reference
-- `--task-id`: Unique task identifier
-- `--target`: Target qubit or circuit identifier
-- `--primary`: Primary domain measurement or score
-- `--secondary`: Secondary confidence or kinetic score
-- `--critical`: Flag for critical safety interlock
-- `--status`: Status descriptor (NOMINAL, DISCORDANT, ANOMALY, etc.)
+The parallel quantum-domain threshold evaluator is available as `python qiskit_transpiler_app.py audit`; it evaluates scalar parameters, **not** a QASM circuit.
 
----
+The server exposes `GET /health`, `GET /metrics`, `POST /api/audit`, `POST /api/chat`, and `GET /api/audit/logs`. FastAPI's interactive reference is at `/docs`. `POST /api/audit` accepts fields defined in `agents/models.py`; `sample_payload.json` provides an example. Inputs with identified sensitive patterns are rejected by the heuristic guard, which is not comprehensive PHI de-identification.
 
-## 🛡️ Security & Architecture
+Batch input and output files must remain within the current working directory; non-boolean values in `is_critical_flag` are rejected.
 
-- **Tamper-Evident HMAC-SHA256 Audit Trail**: Chained, cryptographically signed logs
-- **Path Traversal Protection**: Safe file path resolution in batch mode
-- **Ephemeral Key Fallback**: Secure random key generation when `AUDIT_SECRET_KEY` is not set
-- **FastAPI & Prometheus Telemetry**: Exposes REST endpoints and operational metrics
+## Security and deployment
 
-### Environment Variables
-- `AUDIT_SECRET_KEY`: Secret key for HMAC-SHA256 audit signatures (recommended for production)
-
----
-
-## 🧪 Testing & Verification
-
-Run the automated test suite:
-```bash
-pytest -v
-```
-
-Execute high-throughput batch simulation benchmarks:
-```bash
-python simulator.py 100
-```
-
----
-
-## 🐳 Container Deployment
+Set a private signing key through the runtime environment, never in source control:
 
 ```bash
-docker build -t qiskit-circuit-transpiler-agent .
-docker run -p 8000:8000 qiskit-circuit-transpiler-agent
+export AUDIT_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+docker compose up --build
 ```
 
----
+The Docker Compose file requires this environment variable. If the key is omitted in direct local Python execution, a warning is issued and an ephemeral key is generated; old signatures cannot be verified after restart. Audit records are stored only in process memory and are **not** durable evidence or a complete production compliance solution. Do not submit patient data or credentials. Production deployments should add access control, rate limits and persistent, access-controlled audit storage.
 
-## 📁 Project Structure
+The Python API requires a running server and therefore cannot be hosted directly on static GitHub Pages. The Pages workflow publishes **only** the client-side `web/` demo.
 
-```
-qiskit-circuit-transpiler-agent/
-├── agents/                  # Core multi-agent system (Clinical/Biomedical AI agent)
-│   ├── base.py             # Security, PHI guard, HMAC audit
-│   ├── models.py           # Pydantic data models
-│   ├── supervisor.py       # Master orchestrator
-│   ├── workers.py          # Specialized worker agents
-│   ├── api.py              # FastAPI REST server
-│   └── ...
-├── qiskit_transpiler/      # Quantum circuit transpiler module
-│   ├── engine.py           # Domain evaluation engine
-│   ├── agents.py           # Transpiler sub-agents
-│   ├── error_budget.py     # Error budget management
-│   ├── pareto_optimizer.py # Pareto frontier optimization
-│   └── server.py           # FastAPI app factory
-├── tests/                  # Test suite
-├── cli.py                  # Main CLI entry point
-├── simulator.py            # High-throughput simulation
-└── enrichment.py           # Enrichment feature engines
-```
+## Project layout
+
+- `agents/`: generic task auditors, audit signatures, metrics and FastAPI service.
+- `qiskit_transpiler/`: quantum-domain data models, topology registry, routing, error budgets, Pareto estimators and separate CLI.
+- `web/`: dependency-free static interactive routing demo.
+- `tests/`: Python and JavaScript regression tests.
+- `cli.py`, `simulator.py`, `enrichment.py`: batch entry points, synthetic test generator and legacy threshold examples.
+
+## Compatibility, limitations and license
+
+The browser demo works with current Chromium, Firefox and Safari JavaScript engines. The Python routing algorithm is a deterministic shortest-path heuristic, not Qiskit's SABRE. Hardware topologies and fidelity figures should not be used to benchmark real quantum devices. The legacy threshold services are not clinical decision systems.
+
+MIT license; see [LICENSE](LICENSE).
