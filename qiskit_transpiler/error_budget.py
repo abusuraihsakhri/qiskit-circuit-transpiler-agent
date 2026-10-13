@@ -23,8 +23,11 @@ class GateError:
     error_rate: float
     duration: float  # nanoseconds
     fidelity: float = 1.0
+    gate_name: str = ""
 
     def __post_init__(self):
+        if not math.isfinite(self.error_rate) or not 0 <= self.error_rate <= 1:
+            raise ValueError("Gate error rate must be between 0 and 1")
         self.fidelity = 1.0 - self.error_rate
 
 
@@ -98,6 +101,8 @@ class ErrorBudgetManager:
         t1_times: Optional[Dict[int, float]] = None,
         t2_times: Optional[Dict[int, float]] = None,
     ):
+        if num_qubits < 1 or not math.isfinite(total_error_budget) or total_error_budget < 0:
+            raise ValueError("A positive qubit count and nonnegative finite error budget are required")
         self.num_qubits = num_qubits
         self.total_error_budget = total_error_budget
         self.per_qubit_budget = total_error_budget / num_qubits
@@ -127,22 +132,26 @@ class ErrorBudgetManager:
     def record_cancellation(self, gate1: GateError, gate2: GateError):
         """Record that a pair of gates was cancelled."""
         self.cancelled_gates += 1
-        # Reduce used budget for affected qubits
-        for q in gate1.qubits:
-            if q in self.qubit_budgets:
-                self.qubit_budgets[q].used_budget -= gate1.error_rate
-                self.qubit_budgets[q].used_budget = max(0, self.qubit_budgets[q].used_budget)
+        # Release the contributions of both cancelled gates.
+        for gate in (gate1, gate2):
+            for q in gate.qubits:
+                if q in self.qubit_budgets:
+                    budget = self.qubit_budgets[q]
+                    budget.used_budget = max(0.0, budget.used_budget - gate.error_rate)
 
     def record_gate(self, gate: GateError) -> bool:
-        """Record a gate and check if it fits within the error budget."""
-        can_fit = True
-        for q in gate.qubits:
-            if q in self.qubit_budgets:
-                if not self.qubit_budgets[q].allocate(gate.error_rate):
-                    can_fit = False
-
+        """Atomically allocate the error to all qubits touched by a gate."""
+        if not gate.qubits or any(q not in self.qubit_budgets for q in gate.qubits):
+            raise ValueError("All gate qubits must exist in the budget")
+        if any(
+            self.qubit_budgets[q].remaining_budget < gate.error_rate
+            for q in set(gate.qubits)
+        ):
+            return False
+        for q in set(gate.qubits):
+            self.qubit_budgets[q].allocate(gate.error_rate)
         self.gate_log.append(gate)
-        return can_fit
+        return True
 
     def can_merge_blocks(self, block1: List[GateError], block2: List[GateError]) -> bool:
         """Check if merging two gate blocks stays within error budget."""
@@ -177,13 +186,19 @@ class ErrorBudgetManager:
 
     @staticmethod
     def _are_inverse_gates(gate1: GateError, gate2: GateError) -> bool:
-        """Check if two gates are inverses of each other."""
-        if gate1.gate_type != gate2.gate_type:
+        """Cancel only named inverse operations, never gates based solely on arity."""
+        if gate1.qubits != gate2.qubits or gate1.gate_type != gate2.gate_type:
             return False
-        if gate1.qubits != gate2.qubits:
-            return False
-        # Simplified: gates on same qubits of same type are considered potential inverses
-        return True
+        first, second = gate1.gate_name.lower(), gate2.gate_name.lower()
+        self_inverse = {"x", "y", "z", "h", "cx", "cz", "swap"}
+        inverse_pairs = {
+            ("s", "sdg"), ("sdg", "s"), ("t", "tdg"), ("tdg", "t"),
+            ("sx", "sxdg"), ("sxdg", "sx"),
+        }
+        return bool(first) and (
+            (first == second and first in self_inverse)
+            or (first, second) in inverse_pairs
+        )
 
 
 class NoiseAwareCancellation:
