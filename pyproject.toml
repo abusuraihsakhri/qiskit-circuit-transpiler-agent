@@ -17,11 +17,19 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 requires-python = ">=3.9"
-dependencies = []
+dependencies = [
+    "pydantic>=2,<3",
+    "fastapi>=0.110,<1",
+    "uvicorn>=0.29,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
 
 [project.scripts]
 qiskit-circuit-transpiler-engine = "qiskit_transpiler.cli:main"
+qiskit-circuit-transpiler-agent = "cli:main"
 
 [project.urls]
-Homepage = "https://github.com/abusuraihsakhri/qiskit-circuit-transpiler-engine"
-Repository = "https://github.com/abusuraihsakhri/qiskit-circuit-transpiler-engine.git"
+Homepage = "https://github.com/abusuraihsakhri/qiskit-circuit-transpiler-agent"
+Repository = "https://github.com/abusuraihsakhri/qiskit-circuit-transpiler-agent.git"
